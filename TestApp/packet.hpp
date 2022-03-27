@@ -35,11 +35,21 @@ struct packet_base
   virtual void put_header(std::istream&) = 0;
 };
 
+using ptr = std::shared_ptr<packet_base>;
+
 template<class Body>
 struct basic_packet : public packet_base
 {
+  using base = packet_base;
+  using self = basic_packet<Body>;
   using value_type = typename Body::value_type;
   value_type data;
+
+  template<class...Args>
+  static ptr make(Args&&...args)
+  {
+    return std::make_shared<self>(std::forward<Args>(args)...);
+  }
 
   basic_packet(value_type const& v = value_type())
     : data(v)
@@ -62,7 +72,7 @@ struct basic_packet : public packet_base
     os
       << "Version: " << version << '\n'
       << "Type: " << type << '\n'
-      << "Length : " << length << '\n'
+      << "Length: " << length << '\n'
       << '\n';
   }
   void put_header(std::istream& is) override
@@ -232,8 +242,6 @@ using binary_body = v1::binary_body;
 
 using string_packet = basic_packet<latest::string_body>;
 using binary_packet = basic_packet<latest::binary_body>;
-
-using ptr = std::shared_ptr<packet_base>;
 
 } // namespace sv::net::packet
 } // namespace sv::net

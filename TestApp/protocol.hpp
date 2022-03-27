@@ -140,11 +140,19 @@ private:
       return;
     }
 
-    std::stringstream ss;
-    ss << "string body: " << bytes_transferred << '\n';
-    std::cout << ss.str();
+    {
+      std::stringstream ss;
+      ss << "string body: " << bytes_transferred << '\n';
+      std::cout << ss.str();
+    }
 
     m_string_body.read(m_is);
+
+    {
+      std::stringstream ss;
+      ss << "body: " << m_string_body.data << '\n';
+      std::cout << ss.str();
+    }
 
     do_read();
   }
@@ -234,6 +242,10 @@ private:
   }
   void do_write()
   {
+    // for test
+    packet::ptr test = packet::string_packet::make(std::string("hello scratch-visitor"));
+    m_depot.push_back(test);
+
     if (m_depot.empty()) return;
 
     packet::ptr item = m_depot.front();
