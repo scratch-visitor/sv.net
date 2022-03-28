@@ -31,7 +31,7 @@ struct packet_base
 
   virtual void write(std::ostream&) = 0;
   virtual void read(std::istream&) = 0;
-  virtual void get_header(std::ostream&) = 0;
+  virtual std::size_t get_header(std::ostream&) = 0;
   virtual void put_header(std::istream&) = 0;
 };
 
@@ -63,7 +63,7 @@ struct basic_packet : public packet_base
   {
     Body::read(is, data);
   }
-  void get_header(std::ostream& os) override
+  std::size_t get_header(std::ostream& os) override
   {
     version = Body::get_version();
     type = Body::get_type();
@@ -74,6 +74,8 @@ struct basic_packet : public packet_base
       << "Type: " << type << '\n'
       << "Length: " << length << '\n'
       << '\n';
+
+    return os.tellp();
   }
   void put_header(std::istream& is) override
   {

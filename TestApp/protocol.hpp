@@ -29,6 +29,9 @@ using tcp = asio::ip::tcp;
 template<bool is_server>
 struct basic_protocol;
 
+////////////////////////////////////////////////////////////////////////////////
+// basic_protocol<true>, server_side
+////////////////////////////////////////////////////////////////////////////////
 template<>
 struct basic_protocol<true>
 {
@@ -67,6 +70,7 @@ private:
   }
   void read_header()
   {
+    std::cout << "try to read header" << std::endl;
     asio::async_read_until(
       r_socket,
       m_read_buffer,
@@ -78,11 +82,15 @@ private:
   }
   void on_read_header(system::error_code const& ec, std::size_t bytes_transferred)
   {
+    std::cout << "read_header is done." << std::endl;
+
     if (!!ec)
     {
       on_error(ec);
       return;
     }
+
+    //m_read_buffer.commit(bytes_transferred);
 
     {
       std::stringstream ss;
@@ -91,6 +99,7 @@ private:
     }
 
     m_header.put_header(m_is);
+    //m_read_buffer.consume(bytes_transferred);
 
     {
       std::stringstream ss;
@@ -101,15 +110,23 @@ private:
       std::cout << ss.str();
     }
 
-    m_read_buffer.consume(bytes_transferred);
-
     if (m_header.type == packet::string_body_type)
     {
+      std::cout << "try to read string body" << std::endl;
       m_string_body = m_header;
+      //m_read_buffer.prepare(m_string_body.length);
       asio::async_read(
         r_socket,
         m_read_buffer,
-        [this](system::error_code const& ec, std::size_t bytes) { return m_string_body.length - bytes; },
+        [this](system::error_code const& ec, std::size_t bytes)
+        {
+          if (!!ec)
+          {
+            on_error(ec);
+            return 0ULL;
+          }
+          return m_string_body.length - m_read_buffer.size();
+        },
         [this](system::error_code const& ec, std::size_t bytes) { on_read_string(ec, bytes); }
       );
     }
@@ -118,6 +135,7 @@ private:
       m_binary_body = m_header;
       m_binary_body.data = "test.binary"; // for test
 
+      std::cout << "try to read binary body" << std::endl;
       asio::async_read(
         r_socket,
         m_read_buffer,
@@ -134,6 +152,7 @@ private:
   }
   void on_read_string(system::error_code const& ec, std::size_t bytes_transferred)
   {
+    std::cout << "reading string body is done." << std::endl;
     if (!!ec)
     {
       on_error(ec);
@@ -158,6 +177,7 @@ private:
   }
   void on_read_binary(system::error_code const& ec, std::size_t bytes_transferred)
   {
+    std::cout << "reading binary body is done." << std::endl;
     if (!!ec)
     {
       on_error(ec);
@@ -191,6 +211,9 @@ private:
   packet::binary_packet m_binary_body;
 };
 
+////////////////////////////////////////////////////////////////////////////////
+// basic_protocol<false>, client_side
+////////////////////////////////////////////////////////////////////////////////
 template<>
 struct basic_protocol<false>
 {
@@ -210,6 +233,10 @@ public:
     , m_os(&m_write_buffer)
     , m_is(&m_read_buffer)
   {
+  }
+  virtual ~basic_protocol()
+  {
+
   }
   void read()
   {
@@ -252,20 +279,25 @@ private:
     m_depot.pop_front();
 
     item->get_header(m_os);
+
+    auto size = m_write_buffer.size();
+    std::cout << "write to size: " << size << std::endl;
     write_header(item);
   }
   void write_header(packet::ptr item)
   {
+    std::cout << "try to write header." << std::endl;
     asio::async_write(
       r_socket,
       m_write_buffer,
-      [this, item](system::error_code const& ec, std::size_t bytes)
+      std::bind([&](system::error_code const& ec, std::size_t bytes, packet::ptr item)
       {
         on_write_header(ec, bytes, item);
-      });
+      }, std::placeholders::_1, std::placeholders::_2, item));
   }
   void on_write_header(system::error_code const& ec, std::size_t bytes_transferred, packet::ptr item)
   {
+    std::cout << "writing header is done." << std::endl;
     if (!!ec)
     {
       on_error(ec);
@@ -274,16 +306,18 @@ private:
 
     item->write(m_os);
 
+    std::cout << "try to write body." << std::endl;
     asio::async_write(
       r_socket,
       m_write_buffer,
-      [this, item](system::error_code const& ec, std::size_t bytes)
+      std::bind([&](system::error_code const& ec, std::size_t bytes, packet::ptr item)
       {
         on_write(ec, bytes, item);
-      });
+      }, std::placeholders::_1, std::placeholders::_2, item));
   }
   void on_write(system::error_code const& ec, std::size_t bytes_transferred, packet::ptr item)
   {
+    std::cout << "writing body is done." << std::endl;
     if (!!ec)
     {
       on_error(ec);

@@ -59,13 +59,11 @@ private:
   void on_client(std::string const& _target, unsigned short _port)
   {
     m_client = client_t::make();
-    //m_client->execute("localhost", 8253);
     m_client->execute(_target, _port);
   }
   void on_server(unsigned short _port)
   {
     m_server = server_t::make();
-    //m_server->execute(8253);
     m_server->execute(_port);
   }
 private:

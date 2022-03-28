@@ -25,6 +25,9 @@ namespace asio = boost::asio;
 namespace system = boost::system;
 using tcp = asio::ip::tcp;
 
+////////////////////////////////////////////////////////////////////////////////
+// basic_server
+////////////////////////////////////////////////////////////////////////////////
 template<class _Acceptor>
 struct basic_server
 {
@@ -40,7 +43,17 @@ public:
   basic_server()
     : m_ioc()
     , m_work_guard(m_ioc.get_executor())
-    , m_worker([&]() { m_ioc.run(); })
+    , m_worker([&]() 
+               {
+                 try
+                 {
+                   m_ioc.run();
+                 }
+                 catch (std::exception& e)
+                 {
+                   std::cerr << "io_context::exception: " << e.what() << std::endl;
+                 }
+               })
     , m_acceptor(nullptr)
   {
   }
@@ -67,6 +80,9 @@ private:
   typename _Acceptor::ptr m_acceptor;
 };
 
+////////////////////////////////////////////////////////////////////////////////
+// basic_acceptor
+////////////////////////////////////////////////////////////////////////////////
 template<class _Session>
 struct basic_acceptor
 {
@@ -81,12 +97,18 @@ struct basic_acceptor
 
   basic_acceptor(asio::io_context& _ioc, unsigned short _port)
     : r_ioc(_ioc)
-    , m_acceptor(r_ioc, tcp::endpoint(tcp::v4(), _port))
+    , m_acceptor(r_ioc)
   {
+    tcp::endpoint ep(asio::ip::address(), _port);
+    m_acceptor.open(ep.protocol());
     m_acceptor.set_option(tcp::acceptor::reuse_address(true));
+    m_acceptor.bind(ep);
   }
   virtual ~basic_acceptor()
   {
+    m_session_depot.clear();
+
+    m_acceptor.cancel();
   }
   void execute()
   {
@@ -99,6 +121,7 @@ private:
   void do_accept()
   {
     auto session = _Session::make(r_ioc);
+    m_session_depot[session] = m_acceptor.local_endpoint();
     m_acceptor.async_accept(
       session->socket(),
       [this, session](system::error_code const& ec)
@@ -117,7 +140,7 @@ private:
     std::stringstream ss;
     ss << "accepted from " << session->socket().remote_endpoint() << "\n";
     std::cout << ss.str();
-    m_session_depot.insert({ session->socket().remote_endpoint(), session });
+    m_session_depot[session] = session->socket().remote_endpoint();
 
     do_accept();
 
@@ -133,9 +156,12 @@ private:
 private:
   asio::io_context& r_ioc;
   tcp::acceptor m_acceptor;
-  std::unordered_map<tcp::endpoint, typename _Session::ptr> m_session_depot;
+  std::unordered_map<typename _Session::ptr, tcp::endpoint> m_session_depot;
 };
 
+////////////////////////////////////////////////////////////////////////////////
+// basic_client
+////////////////////////////////////////////////////////////////////////////////
 template<class _Connector>
 struct basic_client
 {
@@ -179,6 +205,9 @@ private:
   typename _Connector::ptr m_connector;
 };
 
+////////////////////////////////////////////////////////////////////////////////
+// basic_connector
+////////////////////////////////////////////////////////////////////////////////
 template<class _Session>
 struct basic_connector
 {
@@ -272,6 +301,9 @@ private:
   unsigned short m_port;
 };
 
+////////////////////////////////////////////////////////////////////////////////
+// basic_session
+////////////////////////////////////////////////////////////////////////////////
 template<class _Protocol>
 struct basic_session
 {
@@ -291,6 +323,9 @@ public:
   }
   virtual ~basic_session()
   {
+    if (m_socket.is_open())
+      m_socket.cancel();
+
     m_protocol = nullptr;
   }
   tcp::socket& socket()
