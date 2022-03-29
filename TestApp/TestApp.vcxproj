@@ -81,6 +81,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="onefile.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="node.hpp" />
