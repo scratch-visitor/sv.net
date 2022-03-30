@@ -7,6 +7,9 @@
 #include <memory>
 #include <string>
 #include <sstream>
+#include <unordered_map>
+
+#include "base.hpp"
 
 namespace sv
 {
@@ -15,223 +18,178 @@ namespace net
 namespace packet
 {
 
-enum packet_type : std::uint32_t
+enum type : std::uint32_t
 {
   empty_body_type = 0,
   string_body_type,
   binary_body_type,
 };
 
-struct packet_base
+struct header
 {
-  std::int32_t version;
-  std::int32_t type;
+  std::uint32_t tag;
+  std::uint32_t version;
+  std::uint32_t type;
   std::uint64_t length;
-  //std::chrono::system_clock::time_point timestamp;
-
-  virtual void write(std::ostream&) = 0;
-  virtual void read(std::istream&) = 0;
-  virtual std::size_t get_header(std::ostream&) = 0;
-  virtual void put_header(std::istream&) = 0;
 };
 
-using ptr = std::shared_ptr<packet_base>;
-
 template<class Body>
-struct basic_packet : public packet_base
-{
-  using base = packet_base;
-  using self = basic_packet<Body>;
-  using value_type = typename Body::value_type;
-  value_type data;
+struct basic;
 
-  template<class...Args>
+struct base : public id_holder<base>
+{
+  using self = base;
+  using ptr = std::shared_ptr<self>;
+
+  static const std::uint32_t sc_tag = 0x12538253;
+  static const std::uint32_t header_size = sizeof(header);
+
+  template<class Derived, class...Args>
   static ptr make(Args&&...args)
   {
-    return std::make_shared<self>(std::forward<Args>(args)...);
+    return std::make_shared<Derived>(std::forward<Args>(args)...);
   }
 
-  basic_packet(value_type const& v = value_type())
-    : data(v)
-  {
-  }
-  void write(std::ostream& os) override
-  {
-    Body::write(os, data);
-  }
-  void read(std::istream& is) override
-  {
-    Body::read(is, data);
-  }
-  std::size_t get_header(std::ostream& os) override
-  {
-    version = Body::get_version();
-    type = Body::get_type();
-    length = Body::get_length(data);
+  virtual void read_header(std::istream&) = 0;
+  virtual void read_body(std::istream&) = 0;
 
-    os
-      << "Version: " << version << '\n'
-      << "Type: " << type << '\n'
-      << "Length: " << length << '\n'
-      << '\n';
+  virtual void write_header(std::ostream&) = 0;
+  virtual void write_body(std::ostream&) = 0;
 
-    return os.tellp();
-  }
-  void put_header(std::istream& is) override
+  virtual std::size_t get_body_size() const = 0;
+
+protected:
+  base(id_type const& _session_id)
+    : m_session_id(_session_id)
   {
-    std::string line;
-    while (std::getline(is, line))
-    {
-      if (line.empty()) break;
-
-      auto tag = line.substr(0, line.find(':'));
-      if (tag == "Version")
-      {
-        auto value = line.substr(line.find(':') + 1);
-        version = std::stoi(value);
-      }
-      else if (tag == "Type")
-      {
-        auto value = line.substr(line.find(':') + 1);
-        type = std::stoi(value);
-      }
-      else if (tag == "Length")
-      {
-        auto value = line.substr(line.find(':') + 1);
-        length = std::stoull(value);
-      }
-      else
-      {
-        std::stringstream ss;
-        ss << "Unknown header: " << line << '\n';
-        std::cerr << ss.str();
-      }
-    }
   }
 
-  template<class Other>
-  basic_packet<Body>& operator = (basic_packet<Other> const& other)
-  {
-    version = other.version;
-    type = other.type;
-    length = other.length;
+protected:
+  header m_header;
+  id_type m_session_id;
+};
 
-    return *this;
+template<class Body>
+struct basic : public base
+{
+  using body_type = Body;
+
+  using self = basic<body_type>;
+  using ptr = std::shared_ptr<base>;
+  using value_type = typename Body::value_type;
+
+  basic(value_type const& v, id_type const& _session_id)
+    : base(_session_id)
+    , m_value(v)
+  {
   }
+  basic(id_type const& _session_id)
+    : base(_session_id)
+  {
+  }
+  virtual void read_header(std::istream& is) override
+  {
+    Body::read_header(is, m_header);
+  }
+  virtual void read_body(std::istream& is) override
+  {
+    Body::read(is, m_value, m_header.length);
+  }
+
+  virtual void write_header(std::ostream& os) override
+  {
+    Body::write_header(os, m_header);
+  }
+  virtual void write_body(std::ostream& os) override
+  {
+    Body::write();
+  }
+
+  virtual std::size_t get_body_size() const override
+  {
+    return std::size_t(m_header.length);
+  }
+
+private:
+  value_type m_value;
+
+  body_type m_body;
 };
 
 namespace v1
 {
-static const int sc_version = 10;
-struct string_body
+struct void_t {};
+struct empty_body
 {
-  using value_type = std::string;
+  std::uint32_t tag;
+  std::uint32_t version;
+  std::uint32_t type;
+  std::uint64_t length;
 
-  static void write(std::ostream& os, value_type const& value)
+  using value_type = void_t;
+  static void read(std::istream& is, value_type& value, std::size_t length)
+  {}
+  static std::size_t get_body_size(value_type const& _value)
   {
-    os << value;
-  }
-  static void read(std::istream& is, value_type& value)
-  {
-    std::getline(is, value);
-  }
-  static int get_version()
-  {
-    return sc_version;
-  }
-  static int get_type()
-  {
-    return string_body_type;
-  }
-  static std::uint64_t get_length(value_type const& value)
-  {
-    return static_cast<std::uint64_t>(value.length());
+    return 0;
   }
 };
+struct string_body
+{
+  std::uint32_t tag;
+  std::uint32_t version;
+  std::uint32_t type;
+  std::uint64_t length;
 
+  using value_type = std::string;
+  static void read(std::istream& is, value_type& value, std::size_t length)
+  {
+    value.reserve(length);
+    is.read(&value[0], length);
+  }
+  static void write(std::ostream& os)
+  {
+
+  }
+  std::size_t get_body_size(value_type const& _value)
+  {
+    return std::size_t(_value.length() + 1); // include null-character.
+  }
+  static void read_header(std::istream& is, header& pkt)
+  {
+    is.read(reinterpret_cast<char*>(&pkt.tag), sizeof(header::tag));
+    is.read(reinterpret_cast<char*>(&pkt.version), sizeof(header::version));
+    is.read(reinterpret_cast<char*>(&pkt.type), sizeof(header::type));
+    is.read(reinterpret_cast<char*>(&pkt.length), sizeof(header::length));
+  }
+  static void write_header(std::ostream& os, header const& pkt)
+  {
+    os.write(reinterpret_cast<const char*>(&pkt.tag), sizeof(header::tag));
+    os.write(reinterpret_cast<const char*>(&pkt.version), sizeof(header::version));
+    os.write(reinterpret_cast<const char*>(&pkt.type), sizeof(header::type));
+    os.write(reinterpret_cast<const char*>(&pkt.length), sizeof(header::length));
+  }
+};
 struct binary_body
 {
+  std::uint32_t tag;
+  std::uint32_t version;
+  std::uint32_t type;
+  std::uint64_t length;
+
   using value_type = std::string;
-
-  static void write(std::ostream& os, value_type const& value)
+  static void read(std::istream& is)
   {
-    std::fstream file;
-    file.open(value, std::ios::binary | std::ios::in);
+  }
+  std::size_t get_body_size(value_type const& _value)
+  {
+    std::fstream file(_value, std::ios::in);
     if (!file.good())
     {
-      std::stringstream ss;
-      ss << "opening file is failed: " << value << '\n';
-      std::cerr << ss.str();
-      return;
+      return std::size_t(0);
     }
-
-    std::size_t size = 1024;
-    std::size_t read_size = 0;
-    char buffer[1024];
-
-    while (file)
-    {
-      file.read(buffer, size);
-      read_size = file.gcount();
-      os.write(buffer, read_size);
-    }
-    file.close();
-  }
-  static void read(std::istream& is, value_type& value)
-  {
-    const std::string directory = "R:\\test\\"; // for test
-    std::string filename = directory + value;
-
-    std::fstream file;
-    file.open(filename, std::ios::binary | std::ios::out);
-    if (!file.good())
-    {
-      std::stringstream ss;
-      ss << "opening file is failed: " << filename << '\n';
-      std::cerr << ss.str();
-      return;
-    }
-
-    std::size_t size = 1024;
-    std::size_t read_size = 0;
-    char buffer[1024];
-
-    while (is)
-    {
-      is.read(buffer, size);
-      read_size = is.gcount();
-      file.write(buffer, read_size);
-    }
-
-    file.close();
-  }
-  static int get_version()
-  {
-    return sc_version;
-  }
-  static int get_type()
-  {
-    return binary_body_type;
-  }
-  static std::uint64_t get_length(value_type const& value)
-  {
-    std::fstream file;
-    std::uint64_t size = 0;
-    file.open(value, std::ios::binary | std::ios::in);
-    if (!file.good())
-    {
-      std::stringstream ss;
-      ss << "opening file is failed: " << value << '\n';
-      std::cerr << ss.str();
-      return size;
-    }
-
     file.seekg(0, std::ios::end);
-    size = file.tellg();
-
-    file.close();
-
-    return size;
+    return std::size_t(file.tellg());
   }
 };
 } // namespace sv::net::packet::v1

@@ -14,6 +14,8 @@
 
 #include <boost/asio.hpp>
 
+#include "base.hpp"
+
 namespace sv
 {
 namespace net
@@ -22,8 +24,11 @@ namespace node
 {
 
 namespace asio = boost::asio;
-namespace system = boost::system;
 using tcp = asio::ip::tcp;
+using error_code = boost::system::error_code;
+
+using namespace std::placeholders;
+using namespace std::literals::chrono_literals;
 
 ////////////////////////////////////////////////////////////////////////////////
 // basic_server
@@ -39,21 +44,10 @@ struct basic_server
   {
     return std::make_shared<self>(std::forward<Args>(args)...);
   }
-public:
   basic_server()
     : m_ioc()
     , m_work_guard(m_ioc.get_executor())
-    , m_worker([&]() 
-               {
-                 try
-                 {
-                   m_ioc.run();
-                 }
-                 catch (std::exception& e)
-                 {
-                   std::cerr << "io_context::exception: " << e.what() << std::endl;
-                 }
-               })
+    , m_worker([&]() { m_ioc.run(); })
     , m_acceptor(nullptr)
   {
   }
@@ -97,23 +91,27 @@ struct basic_acceptor
 
   basic_acceptor(asio::io_context& _ioc, unsigned short _port)
     : r_ioc(_ioc)
-    , m_acceptor(r_ioc)
+    , m_acceptor(r_ioc, tcp::endpoint(asio::ip::address(), _port))
   {
-    tcp::endpoint ep(asio::ip::address(), _port);
-    m_acceptor.open(ep.protocol());
-    m_acceptor.set_option(tcp::acceptor::reuse_address(true));
-    m_acceptor.bind(ep);
   }
   virtual ~basic_acceptor()
   {
-    m_session_depot.clear();
+    if (m_acceptor.is_open())
+    {
+      m_acceptor.close();
+    }
 
-    m_acceptor.cancel();
+    for (auto& e : m_session_depot)
+    {
+      if (e->socket().is_open())
+      {
+        e->socket().close();
+      }
+    }
+    m_session_depot.clear();
   }
   void execute()
   {
-    m_acceptor.listen();
-
     do_accept();
   }
 
@@ -121,42 +119,38 @@ private:
   void do_accept()
   {
     auto session = _Session::make(r_ioc);
-    m_session_depot[session] = m_acceptor.local_endpoint();
-    m_acceptor.async_accept(
-      session->socket(),
-      [this, session](system::error_code const& ec)
-      {
-        on_accepted(ec, session);
-      });
+    m_session_depot.push_back(session);
+    m_acceptor.async_accept(session->socket(),
+                            std::bind(self::on_accepted, this, _1, session));
   }
-  void on_accepted(system::error_code const& ec, typename _Session::ptr session)
+  void on_accepted(error_code const& ec, typename _Session::ptr session)
   {
     if (!!ec)
     {
-      on_error(ec);
+      on_error(ec, "accept");
       return;
     }
 
     std::stringstream ss;
     ss << "accepted from " << session->socket().remote_endpoint() << "\n";
-    std::cout << ss.str();
-    m_session_depot[session] = session->socket().remote_endpoint();
+    std::cout << ss.str() << std::flush;
 
     do_accept();
 
     session->execute();
   }
-  void on_error(system::error_code const& ec)
+  void on_error(error_code const& ec, const char* where)
   {
     std::stringstream ss;
-    ss << "acceptor::error[" << ec.value() << "]: " << ec.message() << '\n';
-    std::cerr << ss.str();
+    ss << where << "::error[" << ec.value() << "]: " << ec.message() << '\n';
+    std::cerr << ss.str() << std::flush;
   }
 
 private:
   asio::io_context& r_ioc;
+
   tcp::acceptor m_acceptor;
-  std::unordered_map<typename _Session::ptr, tcp::endpoint> m_session_depot;
+  std::list<typename _Session::ptr> m_session_depot;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -237,19 +231,15 @@ public:
 private:
   void do_resolve()
   {
-    m_resolver.async_resolve(
-      m_target,
-      std::to_string(m_port),
-      [this](system::error_code const& ec, tcp::resolver::results_type const& results)
-      {
-        on_resolved(ec, results);
-      });
+    tcp::endpoint target(asio::ip::address::from_string(m_target), std::to_string(m_port));
+    m_resolver.async_resolve(target,
+                             std::bind(self::on_resolved, this, _1, _2));
   }
-  void on_resolved(system::error_code const& ec, tcp::resolver::results_type results)
+  void on_resolved(error_code const& ec, tcp::resolver::results_type const& results)
   {
     if (!!ec)
     {
-      on_error(ec);
+      on_error(ec, "resolve");
       return;
     }
 
@@ -262,21 +252,17 @@ private:
       ss << ep.endpoint() << ' ';
     }
     ss << "]\n";
-    std::cout << ss.str();
+    std::cout << ss.str() << std::flush;
 
-    asio::async_connect(
-      session->socket(),
-      results,
-      [this, session](system::error_code const& ec, tcp::endpoint const& ep)
-      {
-        on_connected(ec, session);
-      });
+    asio::async_connect(session->socket(),
+                        results,
+                        std::bind(self::on_connected, this, _1, _2, session));
   }
-  void on_connected(system::error_code const& ec, typename _Session::ptr session)
+  void on_connected(error_code const& ec, tcp::endpoint const& ep, typename _Session::ptr session)
   {
     if (!!ec)
     {
-      on_error(ec);
+      on_error(ec, "connect");
       return;
     }
 
@@ -286,11 +272,11 @@ private:
 
     session->execute();
   }
-  void on_error(system::error_code const& ec)
+  void on_error(error_code const& ec, const char* where)
   {
     std::stringstream ss;
-    ss << "connector::error[" << ec.value() << "]: " << ec.message() << '\n';
-    std::cerr << ss.str();
+    ss << where << "::error[" << ec.value() << "]: " << ec.message() << '\n';
+    std::cerr << ss.str() << std::flush;
   }
 
 private:
@@ -305,7 +291,7 @@ private:
 // basic_session
 ////////////////////////////////////////////////////////////////////////////////
 template<class _Protocol>
-struct basic_session
+struct basic_session : public id_holder<basic_session<_Protocol>>
 {
   using self = basic_session<_Protocol>;
   using ptr = std::shared_ptr<self>;
@@ -324,7 +310,9 @@ public:
   virtual ~basic_session()
   {
     if (m_socket.is_open())
-      m_socket.cancel();
+    {
+      m_socket.close();
+    }
 
     m_protocol = nullptr;
   }
@@ -338,7 +326,7 @@ public:
   }
   void execute()
   {
-    m_protocol = _Protocol::make(m_socket);
+    m_protocol = _Protocol::make(m_socket, id());
 
     do_read();
     do_write();
@@ -356,6 +344,11 @@ private:
   tcp::socket m_socket;
   typename _Protocol::ptr m_protocol;
 };
+
+template<class T>
+using basic_tcp_server = basic_server<basic_acceptor<basic_session<T>>>;
+template<class T>
+using basic_tcp_client = basic_server<basic_acceptor<basic_session<T>>>;
 
 } // namespace sv::net::node
 } // namespace sv::net

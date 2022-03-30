@@ -13,6 +13,7 @@
 
 #include <boost/asio.hpp>
 
+#include "base.hpp"
 #include "packet.hpp"
 
 namespace sv
@@ -23,19 +24,18 @@ namespace protocol
 {
 
 namespace asio = boost::asio;
-namespace system = boost::system;
+using error_code = boost::system::error_code;
 using tcp = asio::ip::tcp;
 
-template<bool is_server>
-struct basic_protocol;
+using namespace std::placeholders;
+using namespace std::literals::chrono_literals;
 
-////////////////////////////////////////////////////////////////////////////////
-// basic_protocol<true>, server_side
-////////////////////////////////////////////////////////////////////////////////
-template<>
-struct basic_protocol<true>
+template<class Packet>
+struct base
 {
-  using self = basic_protocol<true>;
+  using packet_type = Packet;
+  using packet_t = typename packet_type::ptr;
+  using self = base<Packet>;
   using ptr = std::shared_ptr<self>;
 
   template<class...Args>
@@ -43,200 +43,17 @@ struct basic_protocol<true>
   {
     return std::make_shared<self>(std::forward<Args>(args)...);
   }
-public:
-  basic_protocol(tcp::socket& _socket)
+  base(tcp::socket& _socket, id_type _session_id)
     : r_socket(_socket)
     , m_write_buffer()
     , m_read_buffer()
-    , m_os(&m_write_buffer)
-    , m_is(&m_read_buffer)
+    , m_write_stream(&m_write_buffer)
+    , m_read_stream(&m_read_buffer)
+    , m_session_id(_session_id)
   {
   }
-  virtual ~basic_protocol()
+  virtual ~base()
   {
-  }
-  void read()
-  {
-    do_read();
-  }
-  void write()
-  {
-    
-  }
-private:
-  void do_read()
-  {
-    read_header();
-  }
-  void read_header()
-  {
-    std::cout << "try to read header" << std::endl;
-    asio::async_read_until(
-      r_socket,
-      m_read_buffer,
-      "\n\n",
-      [this](system::error_code const& ec, std::size_t bytes)
-      {
-        on_read_header(ec, bytes);
-      });
-  }
-  void on_read_header(system::error_code const& ec, std::size_t bytes_transferred)
-  {
-    std::cout << "read_header is done." << std::endl;
-
-    if (!!ec)
-    {
-      on_error(ec);
-      return;
-    }
-
-    //m_read_buffer.commit(bytes_transferred);
-
-    {
-      std::stringstream ss;
-      ss << "header read: " << bytes_transferred << '\n';
-      std::cout << ss.str();
-    }
-
-    m_header.put_header(m_is);
-    //m_read_buffer.consume(bytes_transferred);
-
-    {
-      std::stringstream ss;
-      ss
-        << "version: " << m_header.version << '\n'
-        << "type: " << m_header.type << '\n'
-        << "length: " << m_header.length << '\n';
-      std::cout << ss.str();
-    }
-
-    if (m_header.type == packet::string_body_type)
-    {
-      std::cout << "try to read string body" << std::endl;
-      m_string_body = m_header;
-      //m_read_buffer.prepare(m_string_body.length);
-      asio::async_read(
-        r_socket,
-        m_read_buffer,
-        [this](system::error_code const& ec, std::size_t bytes)
-        {
-          if (!!ec)
-          {
-            on_error(ec);
-            return 0ULL;
-          }
-          return m_string_body.length - m_read_buffer.size();
-        },
-        [this](system::error_code const& ec, std::size_t bytes) { on_read_string(ec, bytes); }
-      );
-    }
-    else if (m_header.type == packet::binary_body_type)
-    {
-      m_binary_body = m_header;
-      m_binary_body.data = "test.binary"; // for test
-
-      std::cout << "try to read binary body" << std::endl;
-      asio::async_read(
-        r_socket,
-        m_read_buffer,
-        [this](system::error_code const& ec, std::size_t bytes) { return m_binary_body.length - bytes; },
-        [this](system::error_code const& ec, std::size_t bytes) { on_read_binary(ec, bytes); }
-      );
-    }
-    else
-    {
-      std::stringstream ss;
-      ss << "Unknown body type: " << m_header.type << '\n';
-      std::cerr << ss.str();
-    }
-  }
-  void on_read_string(system::error_code const& ec, std::size_t bytes_transferred)
-  {
-    std::cout << "reading string body is done." << std::endl;
-    if (!!ec)
-    {
-      on_error(ec);
-      return;
-    }
-
-    {
-      std::stringstream ss;
-      ss << "string body: " << bytes_transferred << '\n';
-      std::cout << ss.str();
-    }
-
-    m_string_body.read(m_is);
-
-    {
-      std::stringstream ss;
-      ss << "body: " << m_string_body.data << '\n';
-      std::cout << ss.str();
-    }
-
-    do_read();
-  }
-  void on_read_binary(system::error_code const& ec, std::size_t bytes_transferred)
-  {
-    std::cout << "reading binary body is done." << std::endl;
-    if (!!ec)
-    {
-      on_error(ec);
-      return;
-    }
-
-    std::stringstream ss;
-    ss << "binary body: " << bytes_transferred << '\n';
-    std::cout << ss.str();
-
-    m_binary_body.read(m_is);
-
-    do_read();
-  }
-  void on_error(system::error_code const& ec)
-  {
-    std::stringstream ss;
-    ss << "protocol::error[" << ec.value() << "]: " << ec.message() << '\n';
-    std::cerr << ss.str();
-  }
-
-private:
-  tcp::socket& r_socket;
-  asio::streambuf m_write_buffer;
-  asio::streambuf m_read_buffer;
-  std::ostream m_os;
-  std::istream m_is;
-
-  packet::string_packet m_header;
-  packet::string_packet m_string_body;
-  packet::binary_packet m_binary_body;
-};
-
-////////////////////////////////////////////////////////////////////////////////
-// basic_protocol<false>, client_side
-////////////////////////////////////////////////////////////////////////////////
-template<>
-struct basic_protocol<false>
-{
-  using self = basic_protocol<false>;
-  using ptr = std::shared_ptr<self>;
-
-  template<class...Args>
-  static ptr make(Args&&...args)
-  {
-    return std::make_shared<self>(std::forward<Args>(args)...);
-  }
-public:
-  basic_protocol(tcp::socket& _socket)
-    : r_socket(_socket)
-    , m_write_buffer()
-    , m_read_buffer()
-    , m_os(&m_write_buffer)
-    , m_is(&m_read_buffer)
-  {
-  }
-  virtual ~basic_protocol()
-  {
-
   }
   void read()
   {
@@ -249,108 +66,162 @@ public:
 private:
   void do_read()
   {
-    read_header();
+    do_read_header();
   }
-  void read_header()
+  void do_read_header()
   {
-
+    asio::asio_read(r_socket,
+                    m_read_buffer,
+                    [&](error_code const& ec, std::size_t bytes)
+                    {
+                      if (!!ec)
+                      {
+                        on_error(ec, "read_header_condition");
+                        return std::size_t(0);
+                      }
+                      return std::size_t(packet_type::header_size - bytes);
+                    },
+                    std::bind(&self::on_read_header, _1, _2));
   }
-  void on_read_header(system::error_code const& ec, std::size_t bytes_transferred)
+  void on_read_header(error_code const& ec, std::size_t bytes)
   {
+    if (!!ec)
+    {
+      on_error(ec, "read_header");
+      return;
+    }
 
+    packet_t packet = packet_type::make(m_session_id);
+    packet->read_header(m_read_stream);
+
+    do_read_body(packet);
   }
-  void on_read_string(system::error_code const& ec, std::size_t bytes_transferred)
+  void do_read_body(packet_t packet)
   {
-
+    asio::async_read(r_socket,
+                     m_read_buffer,
+                     std::bind([&](error_code const& ec, std::size_t bytes, packet_t packet)
+                               {
+                                 if (!!ec)
+                                 {
+                                   on_error(ec, "read_body_condition");
+                                   return std::size_t(0);
+                                 }
+                                 return std::size_t(packet->get_body_size() - bytes);
+                               }, _1, _2, packet),
+                     std::bind(&self::on_read_body, _1, _2, packet));
   }
-  void on_read_binary(system::error_code const& ec, std::size_t bytes_transferred)
+  void on_read_body(error_code const& ec, std::size_t bytes, packet_t packet)
   {
+    if (!!ec)
+    {
+      on_error(ec, "read_body");
+      return;
+    }
 
+    packet->read_body(m_read_stream);
+    m_read_depot.push_back(packet);
+
+    do_read();
   }
   void do_write()
   {
-    // for test
-    packet::ptr test = packet::string_packet::make(std::string("hello scratch-visitor"));
-    m_depot.push_back(test);
+    packet_t packet = nullptr;
 
-    if (m_depot.empty()) return;
+    // TODO: blocking thread.
+    do
+    {
+      if (m_write_depot.empty()) continue;
 
-    packet::ptr item = m_depot.front();
-    m_depot.pop_front();
+      packet = m_write_depot.front();
+      m_write_depot.pop_front();
+    } while (packet != nullptr);
 
-    item->get_header(m_os);
-
-    auto size = m_write_buffer.size();
-    std::cout << "write to size: " << size << std::endl;
-    write_header(item);
+    do_write_header(packet);
   }
-  void write_header(packet::ptr item)
+  void do_write_header(packet_t packet)
   {
-    std::cout << "try to write header." << std::endl;
-    asio::async_write(
-      r_socket,
-      m_write_buffer,
-      std::bind([&](system::error_code const& ec, std::size_t bytes, packet::ptr item)
-      {
-        on_write_header(ec, bytes, item);
-      }, std::placeholders::_1, std::placeholders::_2, item));
+    packet->write_header(m_write_stream);
+    asio::async_write(r_socket,
+                      m_write_buffer,
+                      [&](error_code const& ec, std::size_t bytes)
+                      {
+                        if (!!ec)
+                        {
+                          on_error(ec, "write_header_condition");
+                          return std::size_t(0);
+                        }
+                        return std::size_t(packet_type::header_size - bytes);
+                      },
+                      std::bind(&self::on_write_header, this, _1, _2, packet));
   }
-  void on_write_header(system::error_code const& ec, std::size_t bytes_transferred, packet::ptr item)
+  void on_write_header(error_code const& ec, std::size_t bytes, packet_t packet)
   {
-    std::cout << "writing header is done." << std::endl;
     if (!!ec)
     {
-      on_error(ec);
+      on_error(ec, "write_header");
       return;
     }
 
-    item->write(m_os);
+    if (bytes > 0)
+    {
+      m_write_buffer.consume(bytes);
+    }
 
-    std::cout << "try to write body." << std::endl;
-    asio::async_write(
-      r_socket,
-      m_write_buffer,
-      std::bind([&](system::error_code const& ec, std::size_t bytes, packet::ptr item)
-      {
-        on_write(ec, bytes, item);
-      }, std::placeholders::_1, std::placeholders::_2, item));
+    do_write_body(packet);
   }
-  void on_write(system::error_code const& ec, std::size_t bytes_transferred, packet::ptr item)
+  void do_write_body(packet_t packet)
   {
-    std::cout << "writing body is done." << std::endl;
+    packet->write_body(m_write_stream);
+    asio::async_write(r_socket,
+                      m_write_buffer,
+                      std::bind([&](error_code const& ec, std::size_t bytes, packet_t packet)
+                                {
+                                  if (!!ec)
+                                  {
+                                    on_error(ec, "write_body_condition");
+                                    return std::size_t(0);
+                                  }
+                                  return std::size_t(packet->get_body_size() - bytes);
+                                }, _1, _2, packet),
+                      std::bind(&self::on_write_body, this, _1, _2, packet));
+  }
+  void on_write_body(error_code const& ec, std::size_t bytes, packet_t packet)
+  {
     if (!!ec)
     {
-      on_error(ec);
+      on_error(ec, "write_body");
       return;
     }
 
-    std::stringstream ss;
-    ss << bytes_transferred << " bytes transferred.\n";
-    std::cout << ss.str();
+    if (bytes > 0)
+    {
+      m_write_buffer.consume(bytes);
+    }
+
+    do_write();
   }
-  void on_error(system::error_code const& ec)
+  void on_error(error_code const& ec, const char* where)
   {
     std::stringstream ss;
-    ss << "protocol::error[" << ec.value() << "]: " << ec.message() << '\n';
-    std::cerr << ss.str();
+    ss << where << "::error[" << ec.value() << "]: " << ec.message() << '\n';
+    std::cerr << ss.str() << std::flush;
   }
 
 private:
   tcp::socket& r_socket;
   asio::streambuf m_write_buffer;
   asio::streambuf m_read_buffer;
-  std::ostream m_os;
-  std::istream m_is;
+  std::ostream m_write_stream;
+  std::istream m_read_stream;
 
-  packet::string_packet m_header;
-  packet::string_packet m_string_body;
-  packet::binary_packet m_binary_body;
+  std::deque<packet_t> m_write_depot;
+  std::deque<packet_t> m_read_depot;
 
-  std::deque<packet::ptr> m_depot;
+  id_type m_session_id;
 };
 
-using server_side = basic_protocol<true>;
-using client_side = basic_protocol<false>;
+using basic = base<packet::base>;
 
 } // namespace sv::net::protocol
 } // namespace sv::net
