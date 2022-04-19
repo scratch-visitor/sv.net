@@ -70,7 +70,7 @@ private:
   }
   void do_read_header()
   {
-    asio::asio_read(r_socket,
+    asio::async_read(r_socket,
                     m_read_buffer,
                     [&](error_code const& ec, std::size_t bytes)
                     {
@@ -79,9 +79,9 @@ private:
                         on_error(ec, "read_header_condition");
                         return std::size_t(0);
                       }
-                      return std::size_t(packet_type::header_size - bytes);
+                      return std::size_t(packet_type::sc_header_size - bytes);
                     },
-                    std::bind(&self::on_read_header, _1, _2));
+                    std::bind(&self::on_read_header, this, _1, _2));
   }
   void on_read_header(error_code const& ec, std::size_t bytes)
   {
@@ -91,8 +91,18 @@ private:
       return;
     }
 
-    packet_t packet = packet_type::make(m_session_id);
+    packet_t packet = sv::net::packet::empty_packet::make(m_session_id);
     packet->read_header(m_read_stream);
+    auto header = packet->get_header();
+
+    if (header.type == sv::net::packet::string_body_type)
+    {
+      packet = packet::string_packet::make(m_session_id, header);
+    }
+    else if (header.type == sv::net::packet::binary_body_type)
+    {
+      packet = packet::binary_packet::make(m_session_id, header);
+    }
 
     do_read_body(packet);
   }
@@ -109,7 +119,7 @@ private:
                                  }
                                  return std::size_t(packet->get_body_size() - bytes);
                                }, _1, _2, packet),
-                     std::bind(&self::on_read_body, _1, _2, packet));
+                     std::bind(&self::on_read_body, this, _1, _2, packet));
   }
   void on_read_body(error_code const& ec, std::size_t bytes, packet_t packet)
   {
@@ -151,7 +161,7 @@ private:
                           on_error(ec, "write_header_condition");
                           return std::size_t(0);
                         }
-                        return std::size_t(packet_type::header_size - bytes);
+                        return std::size_t(packet_type::sc_header_size - bytes);
                       },
                       std::bind(&self::on_write_header, this, _1, _2, packet));
   }

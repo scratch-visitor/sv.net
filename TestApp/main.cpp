@@ -13,8 +13,8 @@ namespace app
 
 class demo
 {
-  using server_t = sv::net::node::basic_server<sv::net::node::basic_acceptor<sv::net::node::basic_session<sv::net::protocol::server_side>>>;
-  using client_t = sv::net::node::basic_client<sv::net::node::basic_connector<sv::net::node::basic_session<sv::net::protocol::client_side>>>;
+  using server_t = sv::net::node::basic_tcp_server<sv::net::protocol::basic>;
+  using client_t = sv::net::node::basic_tcp_client<sv::net::protocol::basic>;
 
 public:
   demo()

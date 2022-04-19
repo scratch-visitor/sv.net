@@ -121,7 +121,7 @@ private:
     auto session = _Session::make(r_ioc);
     m_session_depot.push_back(session);
     m_acceptor.async_accept(session->socket(),
-                            std::bind(self::on_accepted, this, _1, session));
+                            std::bind(&self::on_accepted, this, _1, session));
   }
   void on_accepted(error_code const& ec, typename _Session::ptr session)
   {
@@ -231,9 +231,9 @@ public:
 private:
   void do_resolve()
   {
-    tcp::endpoint target(asio::ip::address::from_string(m_target), std::to_string(m_port));
+    tcp::endpoint target(asio::ip::address::from_string(m_target), m_port);
     m_resolver.async_resolve(target,
-                             std::bind(self::on_resolved, this, _1, _2));
+                             std::bind(&self::on_resolved, this, _1, _2));
   }
   void on_resolved(error_code const& ec, tcp::resolver::results_type const& results)
   {
@@ -256,7 +256,7 @@ private:
 
     asio::async_connect(session->socket(),
                         results,
-                        std::bind(self::on_connected, this, _1, _2, session));
+                        std::bind(&self::on_connected, this, _1, _2, session));
   }
   void on_connected(error_code const& ec, tcp::endpoint const& ep, typename _Session::ptr session)
   {
@@ -293,6 +293,7 @@ private:
 template<class _Protocol>
 struct basic_session : public id_holder<basic_session<_Protocol>>
 {
+  using base = id_holder<basic_session<_Protocol>>;
   using self = basic_session<_Protocol>;
   using ptr = std::shared_ptr<self>;
 
@@ -326,7 +327,7 @@ public:
   }
   void execute()
   {
-    m_protocol = _Protocol::make(m_socket, id());
+    m_protocol = _Protocol::make(m_socket, base::id());
 
     do_read();
     do_write();
@@ -345,10 +346,10 @@ private:
   typename _Protocol::ptr m_protocol;
 };
 
-template<class T>
-using basic_tcp_server = basic_server<basic_acceptor<basic_session<T>>>;
-template<class T>
-using basic_tcp_client = basic_server<basic_acceptor<basic_session<T>>>;
+template<class Proto>
+using basic_tcp_server = basic_server<basic_acceptor<basic_session<Proto>>>;
+template<class Proto>
+using basic_tcp_client = basic_client<basic_connector<basic_session<Proto>>>;
 
 } // namespace sv::net::node
 } // namespace sv::net
