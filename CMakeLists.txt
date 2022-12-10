@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 3.0)
+project(sv.net)
+
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/_deploy/lib/${CMAKE_LIBRARY_ARCHITECTURE}/${CMAKE_BUILD_TYPE}/")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/_deploy/lib/${CMAKE_LIBRARY_ARCHITECTURE}/${CMAKE_BUILD_TYPE}/")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/_deploy/bin/${CMAKE_LIBRARY_ARCHITECTURE}/${CMAKE_BUILD_TYPE}/")
+
+include_directories(src)
+
+add_subdirectory(src)
+add_subdirectory(test)

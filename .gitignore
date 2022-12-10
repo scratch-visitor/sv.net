@@ -406,3 +406,4 @@ FodyWeavers.xsd
 
 _deploy/
 _itm/
+build/
